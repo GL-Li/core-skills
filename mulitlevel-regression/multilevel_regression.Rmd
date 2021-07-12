@@ -1,0 +1,195 @@
+---
+title: "Multilevel Regression"
+author: "GL"
+date: "7/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Load packages and data
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+
+dat <- fread("SCI.DAT") %>%
+    setnames(c("center_id", "candidate_id", "gender",
+               "score_paper", "score_teacher")) %>%
+    # center contineous independent variables
+    .[, score_paper := score_paper - mean(score_paper)]
+```
+
+
+
+## The simplest mixed model - interception only
+
+The formula can be `score_teacher ~ 1 + (1 | center_id)`. They have the same outcome.
+
+```{r}
+m1 <- lmer(score_teacher ~ (1 | center_id), data = dat)
+```
+
+### Understand randomf and fixed effect
+
+```{r}
+summary(m1)
+```
+
+
+### Understand the prediction
+
+The prediction is approximately the mean of each center_id but biased toward the global mean. The fewer the samples, the more the bias. The center_id 84707 has the largest bias, which only has two data points. The center_id 68207 has the second largest bias, which has 5 data points.
+
+```{r}
+# predicted value for each center_id
+pred <- predict(m1, dat)
+df <- data.table(center_id = dat$center_id, pred) %>% 
+    unique()
+
+# mean of each center_id
+avg <- dat[, .(avg = mean(score_teacher),
+               n = .N), by = .(center_id)]
+
+# combine together
+df_compare <- df[avg, on = "center_id"] %>%
+    .[, difference := pred - avg]
+ggplot(df_compare, aes(avg, pred, size = n)) +
+    geom_point(alpha = 0.5) +
+    scale_size_area(breaks = c(2, 10, 50, 100)) +
+    geom_abline(slope = 1, intercept = 0) +
+    geom_hline(yintercept = mean(dat$score_teacher), linetype = "dotted") +
+    labs(title = "Compare True Average and Prediciton of Each Center",
+         x = "True Average",
+         y = "Prediction",
+         size = "Number of\nSamples") +
+    theme_bw()
+```
+
+
+
+## Treat gender as level 2 unit
+```{r}
+m2 <- glmer(score_teacher ~ (1 | center_id) + (1 | gender), data = dat)
+
+# predicted value for each center_id
+pred <- predict(m2, dat)
+dat$pred <- pred
+df <- data.table(center_id = dat$center_id, 
+                 gender = dat$gender,
+                 pred = pred) %>% 
+    .[, .(pred = unique(pred)), by = .(center_id, gender)]
+
+# mean of each center_id
+avg <- dat[, .(avg = mean(score_teacher),
+               n = .N),
+           by = .(center_id, gender)]
+
+# combine together
+df_compare <- df[avg, on = c("center_id", "gender")] %>%
+    .[, difference := pred - avg]
+ggplot(df_compare, aes(avg, pred, size = n)) +
+    geom_point(alpha = 0.5) +
+    scale_size_area(breaks = c(1, 10, 50, 100)) +
+    geom_abline(slope = 1, intercept = 0) +
+    geom_hline(yintercept = mean(dat$score_teacher), linetype = "dotted") +
+    facet_wrap(~gender) +
+    labs(title = "Compare True Average and Prediciton of Each Center and Gender",
+         x = "True Average",
+         y = "Prediction",
+         size = "Number of\nSamples") +
+    theme_bw()
+```
+
+```{r}
+ggplot(df_compare, aes(n, difference, color = (pred > mean(dat$score_teacher)))) +
+    geom_point()
+```
+
+
+
+
+## Treat gender as level 1 variable
+The model outcome is very similar to m2 where gender is treated as a level 2 unit.
+
+```{r}
+m3 <- lmer(score_teacher ~ gender + (1 | center_id), data = dat)
+```
+
+### Understand random and fixed effects
+```{r}
+summary(m3)
+```
+
+### Understand prediction
+
+```{r}
+pred <- predict(m3, dat)
+dat$pred <- pred
+ 
+df <- data.table(center_id = dat$center_id, 
+                 gender = dat$gender,
+                 pred = pred) %>% 
+    .[, .(pred = unique(pred)), by = .(center_id, gender)]
+
+# mean of each center_id
+avg <- dat[, .(avg = mean(score_teacher),
+               n = .N),
+           by = .(center_id, gender)]
+
+# combine together
+df_compare <- df[avg, on = c("center_id", "gender")] %>%
+    .[, difference := pred - avg]
+ggplot(df_compare, aes(avg, pred, size = n)) +
+    geom_point(alpha = 0.5) +
+    scale_size_area(breaks = c(1, 10, 50, 100)) +
+    geom_abline(slope = 1, intercept = 0) +
+    geom_hline(yintercept = mean(dat$score_teacher), linetype = "dotted") +
+    facet_wrap(~gender) +
+    labs(title = "Compare True Average and Prediciton of Each Center and Gender",
+         x = "True Average",
+         y = "Prediction",
+         size = "Number of\nSamples") +
+    theme_bw()
+```
+
+
+# Interaction between center_id and gender
+
+## Treat gender as level 2 unit
+```{r}
+m4 <- glmer(score_teacher ~ (1 | center_id : gender), data = dat)
+
+# predicted value for each center_id
+pred <- predict(m4, dat)
+dat$pred <- pred
+df <- data.table(center_id = dat$center_id, 
+                 gender = dat$gender,
+                 pred = pred) %>% 
+    .[, .(pred = unique(pred)), by = .(center_id, gender)]
+
+# mean of each center_id
+avg <- dat[, .(avg = mean(score_teacher),
+               n = .N),
+           by = .(center_id, gender)]
+
+# combine together
+df_compare <- df[avg, on = c("center_id", "gender")] %>%
+    .[, difference := pred - avg]
+ggplot(df_compare, aes(avg, pred, size = n)) +
+    geom_point(alpha = 0.5) +
+    scale_size_area(breaks = c(1, 10, 50, 100)) +
+    geom_abline(slope = 1, intercept = 0) +
+    geom_hline(yintercept = mean(dat$score_teacher), linetype = "dotted") +
+    # facet_wrap(~gender) +
+    labs(title = "Compare True Average and Prediciton of Each Center and Gender",
+         x = "True Average",
+         y = "Prediction",
+         size = "Number of\nSamples") +
+    theme_bw()
+```
