@@ -1,0 +1,220 @@
+---
+title: "Beyond Census"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Geocoding address to census block
+**What & Why**: Very often a location is given as a mailing address, from which we know the city, state, and zip code. More refined information, however, are associated with the street numbers. For example, the census data at census tract, block group, and block levels. Census geocoding is a technique that map a street address to a census block, in addition to simply its (lon, lat) coordinate.
+
+**How**: [Census Geocoder](https://geocoding.geo.census.gov/geocoder/geographies/addressbatch?form) provides unlimited free service. ArcGIS has very reliable coordinate [geociding](https://developers.arcgis.com/documentation/mapping-apis-and-services/search/services/geocoding-service/), but extra effort is needed to map the address to census geographies. Other geocoding providers can be found [here](https://dlab.berkeley.edu/blog/address-geocoding-options-uc-berkeley-community).
+
+### Census Geocoder
+There are two ways to use Census Geocoder: the online service or a programming language.
+
+#### Online service
+To [census geocode a batch of addresses](https://geocoding.geo.census.gov/geocoder/geographies/addressbatch?form), select `FIND GEOGRAPHIES USING ...` option and upload a csv file containing the addresses. Each line follows the format: id, street address, city, state, zipcode. Missing values are allowed but must seperated with comma, like the third line in the sample below.
+
+```
+1,4600 Silver Hill Road,Washington,DC,20233
+2,400 15th St SE,Washington,DC,20003
+3,72 Hope St,,RI,
+```
+
+After uploading the csv file, click on `Get Results` to download the results in a csv file. It may take a very long time, depending on how many addresses in the file. As a rough estimate, it takes about 10 min for 1000 addresses. So be patient.
+
+
+### API????
+The address batch API is 
+```
+https://geocoding.geo.census.gov/geocoder/geographies/addressbatch?form
+```
+To make a API call, replace `?form` with search parameters.
+
+
+### R censusxy package
+https://github.com/slu-openGIS/censusxy/
+
+
+```{r eval=FALSE}
+library(censusxy)
+data("stl_homicides_small")
+
+
+census_geocode_mini <- function(data, n_repeat = 4, file_name = "tmp.csv"){
+  t1 <- Sys.time()
+  N0 <- nrow(data)
+  keep_downloading = TRUE
+  matched <- structure(list(street_address = character(0), year = numeric(0), 
+                            date = character(0), state = character(0), postal_code = logical(0), 
+                            city = character(0), cxy_lon = numeric(0), cxy_lat = numeric(0), 
+                            cxy_state_id = integer(0), cxy_county_id = integer(0), cxy_tract_id = integer(0), 
+                            cxy_block_id = integer(0)), row.names = integer(0), class = "data.frame")
+  
+  i_round <- 0
+  i_repeat <- 0
+  while(keep_downloading){
+    i_round <- i_round + 1
+    print(i_round)
+    downloaded <- cxy_geocode(data,
+                              street = "street_address", 
+                              city = "city", 
+                              state = "state", 
+                              output = "simple", 
+                              return = "geographies", 
+                              vintage = "Census2010_Current", 
+                              parallel = 14)
+    
+    matched <- rbind(matched, downloaded[!is.na(downloaded$cxy_block_id), ])
+    
+    print(paste0("---- unmatched: ", N0 - nrow(matched), " ----"))
+    
+    if (nrow(matched) < N0){
+      no_match <- sum(is.na(downloaded$cxy_block_id))
+      
+      if (no_match == nrow(data)){
+        i_repeat <- i_repeat + 1
+        print(paste0("i_repeat = ", i_repeat))
+        if (i_repeat > n_repeat){
+          keep_downloading <- FALSE
+        }
+      } else {
+        i_repeat <- 0
+      }
+      # new data
+      data <- downloaded[is.na(downloaded$cxy_block_id), 1:6]
+    } else {
+      keep_downloading = FALSE
+    }
+  }
+  
+  t2 <- Sys.time()
+  print(t2 - t1)
+  
+  message(N0 - nrow(matched), " addresses have no match")
+  
+  if (nrow(matched) == N0){
+    res <- matched
+  } else {
+    res <- rbind(matched, downloaded)
+  }
+  
+  fwrite(res, file = file_name)
+  return(res)
+}
+aaa = census_geocode_mini(stl_homicides[1:70, ])
+
+
+
+
+census_geocode <- function(data, mini_batch = 70){
+  n_minibatch <- nrow(data) %/% mini_batch
+  remainder <- nrow(data) %% mini_batch
+  
+  for (i in 1:n_minibatch){
+    print(paste0(i, "/", n_minibatch))
+    file_name <- paste0("tmp/batch_", i, ".csv")
+    census_geocode_mini(data[(mini_batch * (i - 1) + 1):(mini_batch * i), ], 
+                        file_name = file_name)
+  }
+  
+  if (remainder > 0){
+    census_geocode_mini(data[(mini_batch * n_minibatch + 1):(mini_batch * n_minibatch + remainder), ],
+                        file_name = paste0("tmp/batch_", n_minibatch + 1, ".csv"))
+  }
+}
+
+census_geocode(stl_homicides)
+
+
+```
+
+
+
+#### R tidygeocoder package
+The tidygeocoder package works with several geocoding providers. We focus on Census Geocoders to extract census block from addresses here. Below is a minimal example.
+
+```{r}
+library(tidygeocoder)
+library(magrittr)
+
+df <- structure(list(addr_id = 1:6,
+                     address = c(
+                       "2222 Austin St, houston, TX, 77002",
+                       "5001 Main St, houston, TX, 77002",
+                       "1 Hermann Museum Circle Dr, houston, TX, 77004",
+                       "2612 Wheeler St, houston, TX, 77004",
+                       "2450 Louisiana St Ste 915, houston, TX, 77006",
+                       "822 Booth St, houston, TX, 77009"
+                     )),
+                row.names = c(NA, -6L),
+                class = "data.frame")
+
+census_block <- df %>%
+  geocode(address,
+          method = "census",
+          return_type = "geographies",
+          full_results = TRUE,
+          verbose = TRUE)
+
+knitr::kable(census_block)
+```
+
+The code looks straightforward, but the actual query process is more complicated than it appears, as different run returns different results, with no-match from time to time. If you do a batch query of 1000 addresses, it is no surprise if the return has one third no-matches. You will have to separate those not-matched addresses and query again. To make it even more complicated, the query time does not linearly increase with number of addresses. From my experience, batch size of 100 is very efficient and batch size of 4 tends to give less no-matches. 
+
+**Step 1**: So here is the first round of geocoding if you have large number of addresses. Remember to save each query into a csv file for later.
+
+```{r eval=FALSE}
+# assuming address_df is a data.frame with many rows and the column address is 
+# for one-line addresses as in mail address, and also has a address_id column
+# to track the query results.
+
+for (i in 1:100){
+  batch_size = 100
+  print(batch_size)
+  file_name <- paste0("batch_geocode/batch_", i, ".csv")
+  
+  t1 <- Sys.time()
+  tmp <- address_df[(batch_size*(i - 1) + 1):(batch_size*i), ] %>%
+    geocode(address,
+            method = "census",
+            return_type = "geographies",
+            full_results = TRUE,
+            verbose = FALSE)
+  t2 <- Sys.time()
+  print(t2 - t1)
+  
+  fwrite(tmp, file = file_name)
+}
+```
+
+**Step 2**: Separate matched and not-matched address
+
+```{r eval=FALSE}
+library(data.table)
+library(magrittr)
+
+df_matched <- fread("batch_geocode/batch_1.csv") %>%
+  .[!is.na(match_type)]
+id_not_matched <- fread("batch_geocode/batch_1.csv") %>%
+  .[!is.na(match_type), address_id]
+
+# i starts from 2
+for (i in 2:100){
+  file_name <- paste0("batch_geocode/batch_", i, ".csv")
+  tmp <- fread(file_name)
+  
+  df_matched <- rbindlist(list(df_matched, tmp[!is.na(match_type)]))
+  id_not_matched <- append(id_not_matched, tmp[is.na(match_type), address_id])
+}
+
+fwrite("matched_results/matched_round_1.csv")
+```
+
+**Step 3**: Repeat step 1 and 2 for unmatched addresses until no improvement.
+
+
+## Guessing races from names
