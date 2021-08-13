@@ -1,11 +1,32 @@
 ---
 title: "Multilevel Regression"
-output: html_document
+output: html_notebook
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
 ```
+
+
+## Introduction
+
+### Why multilevel regression
+Generalized linear models assume that observations are independent from each other, which often is not true. For example, the people from the same county will have closer attributes such as income and education levels than in other countries in a world population study. Multilevel regression addresses this issue by considering the difference at country level.
+
+### Terminologies
+
+In a study we want to study the relationship between school scores and IQ of students in a school district. The school district has 10 schools of various size. The collected data has the variables school_id, student_id, school_size, student_score, and student_iq. 
+
+- school_score is the dependent variable
+- student_id is the id of level 1 unit
+- school_id is the id of level 2 unit
+- student_iq is a level 1 variable
+- school_size is a level 2 variable
+
 
 ## Load packages and data
 
@@ -21,9 +42,25 @@ dat <- fread("SCI.DAT") %>%
                "score_paper", "score_teacher")) %>%
     # center contineous independent variables
     .[, score_paper := score_paper - mean(score_paper)]
+
+head(dat)
 ```
+In the table
 
+- `score_teacher` is the dependent variables
+- `candidate_id` and `score_paper` are level 1 predictors and
+- `center_id` are a level 2 predictor.
 
+Let's only consider one level 1 predictor, `score_paper`, the `score_teacher` of the $i^{th}$ candidate in the $j^{th}$ center is 
+
+$$\mbox{score_teacher}_{ij} = \beta_{0j} + \beta_{1j} \times \mbox{score_paper} + \epsilon_{ij}$$
+Where $\beta_{0j}$ and $\beta_{1j}$ varies from cneter to center and $\epsilon_{ij}$ is the error at level 1, which is associated with fix effect (discussed later).
+
+Since $\beta_{0j}$ and $\beta_{1j}$ depend on center, we can write them in the form of
+
+$$\beta_{0j} = \gamma_{00} + \gamma_{01} \times \mbox{center_id} + u_{0j}$$
+$$\beta_{1j} = \gamma_{10} + \gamma_{11} \times \mbox{center_id} + u_{1j}$$
+where $\beta_{0j}$ and $\beta_{1j}$ are considered as dependent varaibles and level 2 variable `center_id` is considered as predictor. 
 
 ## The simplest mixed model - interception only
 
@@ -33,7 +70,7 @@ The formula can be `score_teacher ~ 1 + (1 | center_id)`. They have the same out
 m1 <- lmer(score_teacher ~ (1 | center_id), data = dat)
 ```
 
-### Understand randomf and fixed effect
+### Understand random and fixed effect
 
 ```{r}
 summary(m1)
@@ -52,7 +89,8 @@ df <- data.table(center_id = dat$center_id, pred) %>%
 
 # mean of each center_id
 avg <- dat[, .(avg = mean(score_teacher),
-               n = .N), by = .(center_id)]
+               n = .N),
+           by = .(center_id)]
 
 # combine together
 df_compare <- df[avg, on = "center_id"] %>%
@@ -157,7 +195,7 @@ ggplot(df_compare, aes(avg, pred, size = n)) +
 ```
 
 
-# Interaction between center_id and gender
+## Interaction between center_id and gender
 
 ## Treat gender as level 2 unit
 ```{r}
@@ -185,7 +223,7 @@ ggplot(df_compare, aes(avg, pred, size = n)) +
     geom_abline(slope = 1, intercept = 0) +
     geom_hline(yintercept = mean(dat$score_teacher), linetype = "dotted") +
     # facet_wrap(~gender) +
-    labs(title = "Compare True Average and Prediciton of Each Center and Gender",
+    labs(title = "Compare True Average and Prediciton by Center and Gender",
          x = "True Average",
          y = "Prediction",
          size = "Number of\nSamples") +

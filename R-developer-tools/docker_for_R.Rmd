@@ -1,0 +1,92 @@
+---
+title: "Docker for R"
+output: html_notebook
+---
+
+## Install Docker engine on Ubuntu
+Follow this [instruction](https://docs.docker.com/engine/install/ubuntu/).
+
+### Set up the repository
+```
+# uninstall older version if any
+$ sudo apt-get remove docker docker-engine docker.io containerd runc
+
+# install new one
+$ sudo apt-get update
+$ sudo apt-get install \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+$ echo \
+  "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+```
+
+### Install Docker engine
+```
+# install
+$ sudo apt-get update
+$ sudo apt-get install docker-ce docker-ce-cli containerd.io
+
+# verify installation
+$ sudo docker run hello-world
+```
+
+### Post-installation
+By default, the user is root. New users can be created following this [instruction](https://docs.docker.com/engine/install/linux-postinstall/).
+
+
+
+
+## Create a Docker container for R
+This is a very good [instruction](https://colinfay.me/docker-r-reproducibility/).
+
+### Create a folder and Dockerfile and prepare a sample R file
+```
+$ mkdir mydocker
+$ cd mydocker
+$ touch Dockerfile
+
+# create a dummy R file called myscript.R which has code
+library(tidystringdist)
+df <- tidy_comb_all(iris, Species)
+p <- tidy_stringdist(df)
+write.csv(p, "p.csv")
+```
+
+### Edit the Dockerfile
+The example Dockerfile is
+```
+FROM rocker/r-ver:3.4.4
+
+ARG WHEN
+
+RUN mkdir /home/analysis
+
+RUN R -e "options(repos = \
+  list(CRAN = 'http://mran.revolutionanalytics.com/snapshot/${WHEN}')); \
+  install.packages('tidystringdist')"
+
+COPY myscript.R /home/analysis/myscript.R
+
+CMD cd /home/analysis \
+  && R -e "source('myscript.R')" \
+  && mv /home/analysis/p.csv /home/results/p.csv
+
+mkdir /home/gl/Dropbox/00-core-skills/R-developer-tools/mydocker/results 
+docker run -v ~/mydocker/results:/home/results  analysis 
+```
+
+### Build and Run
+From mydocer directory, run
+```
+# build: install R and packages, takes a long time
+$ sudo docker build --build-arg WHEN=2019-01-06 -t analysis .
+
+# run
+$ sudo docker run analysis 
+```

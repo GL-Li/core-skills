@@ -1,0 +1,36 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Working example
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(lubridate)
+library(ggplot2)
+
+predict_tree <- function(data, min_split = 5){
+    cols <- c("Dopamine", "Acetylcholine", "GABA", "Serotonin", suppl)
+    dt <- dat %>%
+        select(all_of(cols))
+    
+    formlr <- as.formula(paste0(suppl, "~ ."))
+    tree <- rpart(formlr, data = dt, method = "class", minsplit = min_split)
+    
+    png(filename = paste0("png-output/", suppl, ".png"), 
+        width = 1200, height = 700)
+    rpart.plot(tree, 
+               main = paste0(suppl, ", n = ", count[suppl]),
+               type = 2)
+    dev.off()
+}
+```
+

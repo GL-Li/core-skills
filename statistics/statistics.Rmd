@@ -1,0 +1,332 @@
+---
+title: "Application of statistics in real projects"
+output: 
+    html_notebook:
+        toc: true
+        number_section: false
+---
+
+
+# Project 1: NHANES data analysis
+
+## Take-home messages
+
+### Understand different weights
+
+- **survey weight** is the number of people each respondent represents.  It is different from those in machine learning algorithms.
+- **machine learning weight** specifies the importance of a class or case when calculating lost function.
+
+
+### Use survey package for survey data analysis
+
+Survey data analysis has its own ecosystem in R.
+
+
+### Use weights package for quick analysis of weighted data
+- `wtd.t.test`
+- `wtd.chi.sq`
+- `wtd.cor`
+- `wtd.hist`
+
+
+
+
+## Data and libraries
+
+```{r}
+# example data: all NHAA population in 2011 - 2018 NHANES data
+library(tidyverse)
+library(survey)
+library(weights)
+nhanes <- readRDS("asian_final.RDS")
+```
+
+
+## Report one sample mean / proportion with 95% confidence interval
+
+- mean age of one group
+- mean proportion of female in one group
+
+### Mean of one weighted group with 95% confidence interval
+
+**Case study**: Age of participants was collected in a survey. To describe the age distribution, it is a standard and the most succinct way to report the mean of age with 95% confidence interval, in a form like 37.1 (35.5, 38.7). 
+
+```{r}
+report_mean <- function(x, wt = NULL, 
+                        conf_level = 0.95, 
+                        output = "string", 
+                        digits = 3){
+    # Report the mean and confidence interval of numeric vector of one group 
+    # with weight. It is the result of one sample t-test, comparing 
+    # mean against zero.
+    # 
+    # Arguments:
+    # - x: numeric vector
+    # - wt: numeric vector of weight, same length as x
+    # - conf_level: numeric, confidence level
+    # - output: string, output format. If "string", the output is a string like
+    #   "3.14 (2.98, 3.30)". If "list", the output is a list of element "avg", 
+    #   "upper", "lower".
+    # - digits: integer, number of significant digits to keep in the "string" 
+    #   outupt.
+    #
+    # Return: a string or a list depending
+    
+    df <- length(x) - 1  # degree of freedom
+    
+    if (is.null(wt)){
+        wt <- rep(1, length(x))
+    }
+    
+    wtd_t_test <- weights::wtd.t.test(x = x, weight = wt)
+    avg <- wtd_t_test$additional[2]
+    std_err <- wtd_t_test$additional[4]
+    t_stat <- avg/std_err ## not mx - mu, how differ from zero
+    alpha <- 1 - conf_level
+    conf_int <- qt(1 - alpha/2, df)
+    conf_int <- t_stat + c(-conf_int, conf_int)
+    ci <- conf_int * std_err
+    
+    if (output == "string"){
+        avg <- signif(avg, digits)
+        low <- signif(ci[1], digits)
+        up <- signif(ci[2], digits)
+        cat(paste0(avg, " (", low, ", ", up, ")"))
+        return(invisible(NULL))
+    } else if (output == "list"){
+        return(list(avg = avg, lower = ci[1], upper = ci[2]))
+    }
+}
+
+# example
+report_mean(x = nhanes$age,
+            wt = nhanes$weight_interview)
+```
+
+### Report proportion of one sample
+
+**Case study**: Gender was collect in a survey. To describe the proportion of female, we can report the proportion with 95% confidence interval, like 0.45 (0.41, 0.49).
+
+Confidence interval of proportion cannot be calculated with t-test. To include weight, we will use [survey based confidence interval](https://stackoverflow.com/questions/60636060/how-to-determine-the-confidence-interval-for-a-weighted-population-proportion-wi). Its result, however, approaches that of t-test when sample size is large.
+
+```{r}
+report_proportion <- function(x, wt = 1, 
+                              conf_level = 0.95, 
+                              output = "string", 
+                              digits = 3){
+    # Report the proportion and confidence interval of being TRUE of a logic
+    # vector with weight. 
+    # 
+    # Arguments:
+    # - x: logic vector of TRUE and FALSE
+    # - wt: numeric vector of weight, same length as x
+    # - conf_level: numeric, confidence level
+    # - output: string, output format. If "string", the output is a string like
+    #   "3.14 (2.98, 3.30)". If "list", the output is a list of element "avg", 
+    #   "upper", "lower".
+    # - digits: integer, number of significant digits to keep in the outupt.
+    #
+    # Return: a string or a list depending
+    
+    if (length(wt) == 1){
+        wt <- rep(wt, length(x))
+    }
+    
+    df <- data.frame(x = x, wt = wt) 
+    
+    svy_design <- survey::svydesign(ids = ~1, weights = wt, data = df)
+    design_mean <- survey::svymean(~x, svy_design, deff="replace")
+    ci <- confint(design_mean, level = conf_level)
+    
+    if (output == "string"){
+        avg <- signif(design_mean[2], digits) * 100  # values for TRUE
+        low <- signif(ci[2, 1], digits) * 100  
+        up <- signif(ci[2, 2], digits) * 100
+        cat(paste0(avg, " (", low, ", ", up, ")"))
+        return(invisible(NULL))
+    } else if (output == "list"){
+        return(list(avg = design_mean[2], 
+                    lower = ci[2, 1],     
+                    upper = ci[2, 2]))
+    }
+}
+
+# example
+x = nhanes$gender
+wt = nhanes$weight_interview
+report_proportion(x == "F", wt)
+```
+
+## Compare two sample means / proportions
+
+We will compare
+
+- mean age of two groups and p-value of t-test
+- mean proportion of female of two groups and p-value of Chi-square test
+
+and the final out put is a table in the format
+
+characteristics | reported screening | not reported screening | p value
+:-----          | :----              | :----                  | :----
+N sample        | 891                | 646                    |
+Age (years)     | 40.5 (39.5, 41.5)  | 36.4 (35.6, 37.2)      | < 0.00001
+Female (%)      | 36.2 (32.2, 40.2)  | 37.8 (34.5, 41.2)      | 0.51
+
+### Compare two-sample means
+
+**Case study**: To describe the participant's age in groups who reported and not reported diabetes screening. We can report the mean with 95% confidence interval of each group and the p-value of t-test of the two group mean.
+
+
+
+```{r}
+# use library weights for weighted t test
+
+compare_two_mean <- function(x1, x2, wt1, wt2){
+    # To report the mean (95% confidence interval) of two groups and the p-value
+    # of two sample t-test
+    #
+    # Argument: see those in function report_mean
+    
+    # print mean and confidence interval of each group
+    report_mean(x1, wt1)
+    cat("\n")
+    
+    report_mean(x2, wt2)
+    cat("\n")
+    
+    # report p-value of two sample t-test with weight
+    tt <- weights::wtd.t.test(x1, x2, wt1, wt2)
+    print(tt)
+}
+
+# example
+x1 <- nhanes %>% filter(screened == 1) %>% pull(age)
+wt1 <- nhanes %>% filter(screened == 1) %>% pull(weight_interview)
+x2 <- nhanes %>% filter(screened == 0) %>% pull(age)
+wt2 <- nhanes %>% filter(screened == 0) %>% pull(weight_interview)
+compare_two_mean(x1, x2, wt1, wt2)
+```
+
+### Compare two sample proportions
+
+**Case study**: To describe the participant's gender in groups who reported and not reported diabetes screening. We can report the proportion with 95% confidence interval of each group and the p-value of chi-square test of the two group proportion.
+
+
+```{r}
+compare_two_proportion <- function(x1, x2, wt1, wt2){
+    # To report the proportion (95% confidence interval) of two groups and the 
+    # p-value of Chi-squared test
+    #
+    # Argument: see those in function report_proportion
+    
+    # print mean and confidence interval of each group
+    report_proportion(x1, wt1)
+    cat("\n")
+    
+    report_proportion(x2, wt2)
+    cat("\n")
+    
+    # report p-value of two sample t-test with weight
+    # reformat data for chi-squared test
+    id <- c(rep(1, length(x1)), rep(2, length(x2)))
+    x <- c(x1, x2)
+    wt <- c(wt1, wt2)
+    
+    tt <- weights::wtd.chi.sq(id, x, weight = wt)
+    print(tt)
+}
+
+# example
+x1 <- nhanes %>% filter(screened == 1) %>% pull(gender)
+wt1 <- nhanes %>% filter(screened == 1) %>% pull(weight_interview)
+x2 <- nhanes %>% filter(screened == 0) %>% pull(gender)
+wt2 <- nhanes %>% filter(screened == 0) %>% pull(weight_interview)
+compare_two_proportion(x1 == "F", x2 == "F", wt1, wt2)
+```
+
+
+## Report odds ratio from logistic regression
+
+We expect to report odds ratio in a table like:
+
+<table style="width:790px">
+    <thead>
+        <tr style="border-bottom:2px gray solid; color:black">
+            <th align="left">Variable</th>
+            <th colspan="2"; align="center">Overall population</th>
+            <th colspan="2"; align="center">Screening recommended</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr style="border-bottom:1px gray solid; color:black"; align="left">
+            <td> </td>
+            <td>Odds ratio (95% CI)</td>
+            <td>p value</td>
+            <td>Odds ratio (95% CI)</td>
+            <td>p value</td>
+        </tr>
+        <tr style="border-bottom:1px gray solid; color:gray"; align="left">
+            <td>Age (year)</td>
+            <td>1.03 (1.02-1.04)</td>
+            <td>< 0.00001</td>
+            <td>1.02 (1.01-1.04)</td>
+            <td>0.0018</td>
+        </tr>
+        <tr style="border-bottom:1px gray solid; color:gray"; align="left">
+            <td>Female</td>
+            <td>1.24 (0.93-1.65)</td>
+            <td>0.14</td>
+            <td>1.09 (0.72-1.65)</td>
+            <td>0.69</td>
+        </tr>
+    </tbody>
+</table>
+<br>
+
+
+For a survey, the logistic regression must be weighted using `survey::svydesign` and and `survey::svyglm`. The `weights` in `glm` is **NOT** sampling weight, but the importance in error (or cost function in machine learning algorithms) calculation.
+
+
+```{r}
+get_odd_ratio <- function(lgr, n_decimal = 2){
+    # To extract odds ratio with 95% confidence interval and p-value from a  
+    # logistic regression model
+    #
+    # Arguments:
+    # - lgr: logistic regression model
+    # - n_decimal: interger, number of decimal to keep
+    # 
+    # Return: data frame containing odds ratio of each predictor
+    
+    estimate <- summary(lgr)$coefficients %>%
+        data.frame() %>%
+        # delete intercept
+        .[-1, ] %>%
+        mutate(odd_ratio = exp(Estimate) %>% round(2),
+               CI_low = exp(Estimate - 1.96 * Std..Error) %>% round(2),
+               CI_high = exp(Estimate + 1.96 * Std..Error)  %>% round(2),
+               p_value = Pr...t..) %>%
+        mutate(`Odds Ratio (95% CI)` = paste0(odd_ratio, 
+                                              " (", 
+                                              CI_low, 
+                                              "-", 
+                                              CI_high, 
+                                              ")")) %>%
+        select(`Odds Ratio (95% CI)`, p_value)
+    
+    return(estimate)
+}
+
+# example: survey based model
+lgr_all <- svyglm(screened ~ age + gender + BMI + insured + hypertension + 
+                      hyperlipidemia + physical_inactive + family_diabetes,
+                  design = svydesign(ids = ~ 1, 
+                                     data = nhanes, 
+                                     weights = ~nhanes$weight_mec),
+                  family = quasibinomial)  # to avoid warning with binomial
+get_odd_ratio(lgr_all)
+```
+
+
+
+# Project 2: tbd
